@@ -75,8 +75,7 @@ wscan revert                                               # no: back to how it 
 wscan set can2.on=false --save                             # sure already: set and keep in one go
 ```
 
-`wscan -h` and `wscan set -h` list everything. `sudo` does not know the `wscan` command:
-for the few commands that need it, run `sudo ./wscan ...` from the repo folder.
+`wscan -h` and `wscan set -h` list everything.
 
 ## Where to connect the gateway
 
@@ -85,7 +84,7 @@ a fixed address of that network on its web page (*Network*), then answer `1` in 
 
 **Direct cable to a spare Ethernet port** (bench, or to keep the bus off the plant network).
 Answer `2`: the setup gives that port an address on the gateway's subnet. A gateway fresh from
-the factory is at 192.168.0.7; `sudo ./wscan discover --arp eth0` finds it even before the
+the factory is at 192.168.0.7; `sudo wscan discover --arp eth0` finds it even before the
 port has an address.
 
 Never put two interfaces of this device on the same subnet (e.g. Wi-Fi and Ethernet both on
@@ -103,14 +102,14 @@ frames onto the bus. Keep the gateway on a dedicated network or VLAN and change 
 |---|---|
 | `wscan pending` | changes tried with `set` and not saved yet |
 | `wscan discover [--arp IFACE]` | find gateways (`--arp` needs root) |
-| `wscan net check` / `sudo ./wscan net apply` | how this device reaches the gateway / set its address |
+| `wscan net check` / `sudo wscan net apply` | how this device reaches the gateway / set its address |
 | `wscan gw status` | gateway model, firmware, uptime |
 | `wscan gw show [can1\|can2\|serial\|func\|net]` | every gateway setting, raw |
 | `wscan gw apply` | make the gateway match the configuration file |
 | `wscan gw backup [file]` / `wscan gw restart` | save every gateway setting / restart it |
 | `wscan dump` / `wscan send 123#DEADBEEF` | talk to the gateway directly, no bridge (works on any OS) |
 | `wscan config` | which configuration file is used, and what is in it |
-| `wscan bridge` / `sudo ./wscan vcan-up` | what the service runs |
+| `wscan bridge` / `sudo wscan vcan-up` | what the service runs |
 
 `wscan set` also takes the raw field names of `wscan gw show` (`can1.packttime=5`,
 `serial.baud=9600`, `func.can2can=1`) and `gateway.host=...`.

@@ -37,17 +37,24 @@ if [ "$ASK" = 1 ]; then
         read -rp "config.toml already exists: answer the setup questions again? [y/N] " again
         case "$again" in [yYsS]*) "$REPO/wscan" --config "$CONFIG" setup || true ;; esac
     else
-        "$REPO/wscan" setup || echo "setup not completed: run ./wscan setup when you are ready"
+        "$REPO/wscan" setup || echo "setup not completed: run 'wscan setup' when you are ready"
     fi
 fi
 if [ ! -f "$CONFIG" ]; then
     cp "$REPO/config.example.toml" "$CONFIG"
-    echo "created config.toml with the factory defaults (./wscan setup to answer the questions)"
+    echo "created config.toml with the factory defaults ('wscan setup' to answer the questions)"
 fi
 "$REPO/wscan" --config "$CONFIG" config >/dev/null
 
-mkdir -p "$HOME/.local/bin"
-ln -sf "$REPO/wscan" "$HOME/.local/bin/wscan"
+# the command for everyone, sudo included (/usr/local/bin is in sudo's path too)
+ON_PATH=0
+if sudo ln -sf "$REPO/wscan" /usr/local/bin/wscan; then
+    ON_PATH=1
+    [ "$(readlink -f "$HOME/.local/bin/wscan" 2>/dev/null)" = "$REPO/wscan" ] && rm -f "$HOME/.local/bin/wscan"
+else
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$REPO/wscan" "$HOME/.local/bin/wscan"
+fi
 
 if [ "$SERVICE" = 1 ]; then
     echo "installing the bridge service ..."
@@ -61,10 +68,12 @@ if [ "$SERVICE" = 1 ]; then
 fi
 
 echo
-case ":$PATH:" in
-    *":$HOME/.local/bin:"*) ;;
-    *) echo "the \`wscan\` command works from your next login (or now: export PATH=\"\$HOME/.local/bin:\$PATH\")" ;;
-esac
+if [ "$ON_PATH" = 0 ]; then
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) echo "the \`wscan\` command works from your next login (or now: export PATH=\"\$HOME/.local/bin:\$PATH\")" ;;
+    esac
+fi
 cat <<EOF
 everyday commands:
   wscan show                         everything at a glance

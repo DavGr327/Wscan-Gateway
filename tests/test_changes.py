@@ -104,6 +104,22 @@ def test_plain_names(setup):
     assert c.channel("can1").gateway["baud"] == "250000"
 
 
+def test_output_in_plain_words(setup, capsys):
+    web, cfg = setup
+    run(cfg, "set", "can1.filter=allow:101", "can1.mode=loopback")
+    out = capsys.readouterr().out
+    assert "can1.filter: off -> allow:101" in out and "can1.mode: normal -> loopback" in out
+    assert "ID_FITER_TEPE" not in out and "not saved yet" in out
+    run(cfg, "pending")
+    assert "can1.filter: off -> allow:101" in capsys.readouterr().out
+    run(cfg, "revert")
+    out = capsys.readouterr().out
+    assert "can1.filter: allow:101 -> off" in out and "can1.mode: loopback -> normal" in out
+    run(cfg, "set", "can1.packet_ms=5", "--save")
+    out = capsys.readouterr().out
+    assert "not saved yet" not in out and "saved into" in out
+
+
 def test_show(setup, capsys):
     web, cfg = setup
     run(cfg, "set", "can1.filter=block-ext:18FF0000-18FFFFFF")

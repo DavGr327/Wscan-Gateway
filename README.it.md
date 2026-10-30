@@ -53,7 +53,7 @@ wscan revert                        # no: torno com'era
 wscan set can2.on=false --save      # già sicuro: imposto e salvo insieme
 ```
 
-`wscan -h` e `wscan set -h` spiegano tutto. Con `sudo` usa `sudo ./wscan ...` dalla cartella.
+`wscan -h` e `wscan set -h` spiegano tutto.
 
 ## Dove montare il gateway
 

@@ -21,8 +21,8 @@ from pathlib import Path
 from . import tomledit
 from .config import (CHANNEL_KEYS, GATEWAY_CHANNELS, GATEWAY_PAGES, REPO_ROOT, Config, ConfigError, get_value,
                      load, read_pending, set_value, validate, write_pending)
-from .friendly import BRIDGE_ALIASES, DISPLAY, PLAIN_GATEWAY, FriendlyError, expand
-from .gateway import WRITABLE, Gateway
+from .friendly import BRIDGE_ALIASES, PLAIN_GATEWAY, FriendlyError, change_lines, expand
+from .gateway import WRITABLE, Gateway, GatewayError
 
 SERVICE = "wscan-bridge"
 
@@ -119,7 +119,8 @@ def restart_bridge(cfg: Config, say=print, quiet_if_missing: bool = False) -> bo
     return True
 
 
-def set_live(cfg: Config, items: list[str], restart: bool = True, say=print) -> bool:
+def set_live(cfg: Config, items: list[str], restart: bool = True, say=print, hint: bool = True) -> bool:
+    """hint: end with the save/revert reminder (off when the caller saves right away)."""
     gw_changes, br_changes = parse(items)
     pending = read_pending(cfg.pending_file)
 
@@ -137,7 +138,9 @@ def set_live(cfg: Config, items: list[str], restart: bool = True, say=print) -> 
     if gw_changes:
         gw = Gateway.from_config(cfg)
         for page, changes in gw_changes.items():
-            diff = gw.diff(page, changes)
+            gw.check_fields(page, changes)
+            current = gw.form(page)[0]
+            diff = {f: (current[f], str(v)) for f, v in changes.items() if current[f] != str(v)}
             if not diff:
                 continue
             gw.write(page, {f: new for f, (_, new) in diff.items()})
@@ -145,8 +148,8 @@ def set_live(cfg: Config, items: list[str], restart: bool = True, say=print) -> 
             page_entries = pending["gateway"].setdefault(page, {})
             for f, (old, new) in diff.items():
                 _record(page_entries, f, old, new)
-                shown = DISPLAY.get(f, f) if page in GATEWAY_CHANNELS else f
-                say(f"  {page}.{shown}: {old} -> {new}")
+            for line in change_lines(page, diff, current):
+                say(f"  {line}")
             write_pending(cfg.pending_file, pending)  # after each page: a failure later keeps the record
         if written and restart:
             say(f"gateway restarted, back after {gw.restart():.0f} s")
@@ -163,14 +166,23 @@ def set_live(cfg: Config, items: list[str], restart: bool = True, say=print) -> 
     if not written and not br_diff:
         say("nothing to change")
         return False
-    say("not saved yet: `wscan save` keeps it in the config, `wscan revert` undoes it")
+    if hint:
+        say("not saved yet: `wscan save` keeps it in the config, `wscan revert` undoes it")
     return True
 
 
-def pending_lines(cfg: Config) -> list[str]:
+def pending_lines(cfg: Config, gw: Gateway | None = None) -> list[str]:
+    """With a gateway to read the current values from, filter changes show as one line."""
     p = read_pending(cfg.pending_file)
-    lines = [f"  {page}.{DISPLAY.get(f, f) if page in GATEWAY_CHANNELS else f}: {old} -> {new}  (gateway)"
-             for page, fields in p["gateway"].items() for f, (old, new) in fields.items()]
+    lines = []
+    for page, fields in p["gateway"].items():
+        current = None
+        if gw is not None:
+            try:  # values now = the new ones; put the old ones back to describe the "before"
+                current = {**gw.form(page)[0], **{f: old for f, (old, _) in fields.items()}}
+            except GatewayError:
+                current = None
+        lines += [f"  {line}  (gateway)" for line in change_lines(page, {f: tuple(v) for f, v in fields.items()}, current)]
     lines += [f"  {k}: {old} -> {new}  (bridge)" for k, (old, new) in p["bridge"].items()]
     return lines
 
@@ -240,9 +252,10 @@ def revert(cfg: Config, restart: bool = True, say=print) -> bool:
     if pending["gateway"]:
         gw = Gateway.from_config(cfg)
         for page, fields in pending["gateway"].items():
+            current = gw.form(page)[0]
             gw.write(page, {f: old for f, (old, _) in fields.items()})
-            for f, (old, new) in fields.items():
-                say(f"  {page}.{f}: {new} -> {old}")
+            for line in change_lines(page, {f: (new, old) for f, (old, new) in fields.items()}, current):
+                say(f"  {line}")
         if restart:
             say(f"gateway restarted, back after {gw.restart():.0f} s")
     for k, (old, new) in pending["bridge"].items():

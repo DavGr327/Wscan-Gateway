@@ -86,6 +86,29 @@ def describe_filter(values: dict) -> str:
     return f"{kind}:{lo:X}" if lo == hi else f"{kind}:{lo:X}-{hi:X}"
 
 
+FILTER_FIELDS = ("ID_FITER_TEPE", "StdIDLow", "StdIDHigh", "ExdIDLow", "ExdIDHigh")
+_MODE_NAME = {v: k for k, v in MODES.items()}
+
+
+def change_lines(page: str, changes: dict, current: dict | None = None) -> list[str]:
+    """{field: (old, new)} on a gateway page -> readable lines. With the page's full values
+    (`current`, before the change) the filter fields become a single `filter` line."""
+    channel = page in ("can1", "can2")
+    rest, lines = dict(changes), []
+    if channel and current is not None and set(FILTER_FIELDS) & set(changes):
+        before, after = dict(current), dict(current)
+        for f, (old, new) in changes.items():
+            before[f], after[f] = old, new
+        lines.append(f"{page}.filter: {describe_filter(before)} -> {describe_filter(after)}")
+        for f in FILTER_FIELDS:
+            rest.pop(f, None)
+    for f, (old, new) in rest.items():
+        if channel and f == "paritybit":
+            old, new = _MODE_NAME.get(old, old), _MODE_NAME.get(new, new)
+        lines.append(f"{page}.{DISPLAY.get(f, f) if channel else f}: {old} -> {new}")
+    return lines
+
+
 def describe_channel(values: dict) -> dict:
     """Gateway form values of a channel -> plain words."""
     mode = {v: k for k, v in MODES.items()}.get(values.get("paritybit", ""), values.get("paritybit", "?"))

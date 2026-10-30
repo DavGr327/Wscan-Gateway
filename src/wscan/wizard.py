@@ -259,7 +259,7 @@ def run(cfg: Config, p: Prompter, discover=_discover, net_apply=_sudo_net_apply)
     if answers["network"]:
         p.say("setting this device's network address ...")
         if net_apply(path) != 0:
-            p.say("network not set: check the cable and run `sudo ./wscan net apply`")
+            p.say("network not set: check the cable and run `sudo wscan net apply`")
 
     if _reachable(new.host, new.http_port, 2):
         try:

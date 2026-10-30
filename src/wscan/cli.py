@@ -207,7 +207,7 @@ def _changes(fn, cfg: Config) -> int:
 
 def cmd_set(cfg: Config, a) -> int:
     def go(c):
-        if set_live(c, a.assign, restart=not a.no_restart, say=print) and a.save:
+        if set_live(c, a.assign, restart=not a.no_restart, say=print, hint=not a.save) and a.save:
             save(load(str(c.source) if c.source else None))
     return _changes(go, cfg)
 
@@ -233,7 +233,14 @@ def cmd_setup(cfg: Config, a) -> int:
 
 
 def cmd_pending(cfg: Config, a) -> int:
-    lines = pending_lines(cfg)
+    gw = None
+    if read_pending(cfg.pending_file)["gateway"]:
+        try:  # only to describe filter changes in plain words
+            gw = Gateway.from_config(cfg, prompt=False)
+            gw.timeout = 3
+        except GatewayError:
+            gw = None
+    lines = pending_lines(cfg, gw)
     print("\n".join(["applied, not saved (wscan save / wscan revert):", *lines]) if lines
           else "no unsaved changes")
     return 0
