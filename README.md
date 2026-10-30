@@ -42,8 +42,15 @@ Then it sets up everything: this device's network address (if needed, with an au
 rollback if the network breaks), the gateway's channel settings, the `wscan` command and a
 service that keeps the bridge running across reboots. Nothing else to do: `candump vcan0`.
 
-Needs Linux with Python ≥ 3.11 (nothing to install; on 3.9/3.10 the installer adds `tomli`)
-and NetworkManager if the gateway is on a direct cable.
+Needs Linux with Python ≥ 3.11 (nothing to install; on 3.9/3.10 the installer adds `tomli`),
+`sudo`, and NetworkManager if the gateway is on a direct cable.
+
+| | |
+|---|---|
+| `./install.sh --defaults` | no questions: factory defaults (answer them later with `wscan setup`) |
+| `./install.sh --no-service` | everything but the background service |
+| `git pull && ./install.sh` | update; answer `n` to keep your configuration |
+| `./uninstall.sh` | removes the service and the `wscan` command; keeps the folder, the configuration and the network |
 
 ## Everyday use
 
@@ -59,13 +66,26 @@ Settings for `wscan set`, on `can1` or `can2` (several at once are fine):
 
 | Setting | Example | |
 |---|---|---|
-| `bitrate` | `can1.bitrate=500000` | bus bit rate, 10000-1000000. Every device on the bus needs the same |
-| `mode` | `can1.mode=loopback` | `normal` or `loopback` |
-| `filter` | `can1.filter=allow:100-1FF` | only these IDs (hex); `block:` drops them, `allow-ext:`/`block-ext:` for 29-bit IDs, `off` lets all through |
-| `packet_ms`, `packet_frames` | `can1.packet_ms=5` | how often / after how many frames the gateway sends what it collected |
-| `name` | `can1.name=can0` | interface name on this device (e.g. `can0` if CODESYS wants it) |
-| `on` | `can2.on=false` | use the channel or not |
-| `port` | `can1.port=21001` | TCP port, changed on the gateway and in the bridge |
+| `bitrate` | `can1.bitrate=500000` | bus bit rate in bit/s, 10000-1000000. Every device on the bus needs the same |
+| `mode` | `can1.mode=loopback` | `normal` (on the bus) or `loopback` (the gateway's test mode, for checks without a bus) |
+| `filter` | `can1.filter=allow:100-1FF` | which frames reach this device, IDs in hex, see below |
+| `packet_ms` | `can1.packet_ms=5` | the gateway sends what it collected every N ms (1-1000, default 10): lower = less delay, more packets |
+| `packet_frames` | `can1.packet_frames=50` | ... or as soon as it has N frames (1-1000, default 50) |
+| `name` | `can1.name=can0` | interface name on this device, up to 15 characters (e.g. `can0` if CODESYS wants it) |
+| `on` | `can2.on=false` | use the channel (`true`) or leave it out (`false`) |
+| `port` | `can1.port=21001` | TCP port of the channel, changed on the gateway and in the bridge |
+
+Filters, IDs in hex, a range (`100-1FF`) or a single ID (`101`):
+
+| | |
+|---|---|
+| `filter=off` | every frame passes (default) |
+| `filter=allow:100-1FF` | only standard (11-bit) IDs 0x100-0x1FF pass |
+| `filter=block:100` | everything passes except standard ID 0x100 |
+| `filter=allow-ext:18FF0000-18FFFFFF` | only these extended (29-bit) IDs pass |
+| `filter=block-ext:18FF50E5` | everything passes except this extended ID |
+
+Seen on the bench: `allow:` on standard IDs also stops every extended frame.
 
 ```bash
 wscan set can1.bitrate=500000 can1.filter=allow:100-1FF   # try it
@@ -75,7 +95,9 @@ wscan revert                                               # no: back to how it 
 wscan set can2.on=false --save                             # sure already: set and keep in one go
 ```
 
-`wscan -h` and `wscan set -h` list everything.
+Every gateway change makes the gateway restart: the channels stop for a few seconds, then the
+bridge reconnects by itself. `--no-restart` writes it without restarting (it takes effect at the
+next restart). `wscan -h` and `wscan set -h` list everything.
 
 ## Where to connect the gateway
 

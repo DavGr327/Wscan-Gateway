@@ -1,5 +1,6 @@
-# wscan configuration. Copy to config.toml (install.sh does it) and edit.
-# Every key is optional: what is left out keeps the value shown here,
+# wscan configuration. You normally never edit it: ./install.sh and `wscan setup` write
+# config.toml from your answers, `wscan set ... ` + `wscan save` update it (comments kept).
+# By hand works too: every key is optional, what is left out keeps the value shown here,
 # which matches a gateway fresh from the factory.
 
 [gateway]
