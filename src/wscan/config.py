@@ -7,6 +7,7 @@ match a gateway fresh from the factory (192.168.0.7, CAN1 on 20001, CAN2 on 2000
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,8 @@ except ModuleNotFoundError:  # Python < 3.11
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GATEWAY_CHANNELS = ("can1", "can2")
+GATEWAY_PAGES = ("serial", "func")  # gateway pages that are not a channel: [gateway.serial], [gateway.func]
+CHANNEL_KEYS = {"port": int, "interface": str, "enabled": bool}  # bridge settings `wscan set` can change
 SEARCH_PATHS = (
     REPO_ROOT / "config.toml",
     Path("~/.config/wscan/config.toml").expanduser(),
@@ -60,11 +63,57 @@ class Config:
         Channel("can1", 20001, "vcan0"),
         Channel("can2", 20005, "vcan1"),
     ])
+    gateway_pages: dict = field(default_factory=dict)  # {"serial": {...}, "func": {...}} for `gw apply`
     source: Path | None = None
+    pending_file: Path | None = None  # changes tried with `wscan set`, not saved yet
+    unsaved: int = 0
 
     @property
     def enabled_channels(self) -> list[Channel]:
         return [c for c in self.channels if c.enabled]
+
+    def channel(self, name: str) -> Channel:
+        for c in self.channels:
+            if c.name == name:
+                return c
+        raise ConfigError(f"no channel '{name}' in {self.source or 'the defaults'}")
+
+
+def pending_path(source: Path | None) -> Path:
+    base = source or REPO_ROOT / "config.toml"
+    return base.with_name(base.stem + ".pending.json")
+
+
+def read_pending(path: Path) -> dict:
+    """{"gateway": {page: {field: [old, new]}}, "bridge": {"can1.port": [old, new], "gateway.host": ...}}"""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        data = {}
+    return {"gateway": data.get("gateway", {}), "bridge": data.get("bridge", {})}
+
+
+def write_pending(path: Path, data: dict) -> None:
+    data = {"gateway": {p: f for p, f in data["gateway"].items() if f}, "bridge": data["bridge"]}
+    if not data["gateway"] and not data["bridge"]:
+        path.unlink(missing_ok=True)
+        return
+    path.write_text(json.dumps(data, indent=2))
+
+
+def get_value(cfg: Config, key: str):
+    if key == "gateway.host":
+        return cfg.host
+    name, attr = key.split(".", 1)
+    return getattr(cfg.channel(name), attr)
+
+
+def set_value(cfg: Config, key: str, value) -> None:
+    if key == "gateway.host":
+        cfg.host = value
+        return
+    name, attr = key.split(".", 1)
+    setattr(cfg.channel(name), attr, value)
 
 
 def find(explicit: str | None = None) -> Path | None:
@@ -93,8 +142,21 @@ def _take(table: dict, where: str, allowed: dict) -> dict:
     return out
 
 
-def load(explicit: str | None = None) -> Config:
+def load(explicit: str | None = None, with_pending: bool = True) -> Config:
+    """with_pending: bridge settings tried with `wscan set` and not saved yet are applied on top."""
     path = find(explicit)
+    cfg = _load_file(path)
+    cfg.pending_file = pending_path(path)
+    pending = read_pending(cfg.pending_file)
+    cfg.unsaved = sum(len(f) for f in pending["gateway"].values()) + len(pending["bridge"])
+    if with_pending and pending["bridge"]:
+        for key, (_, new) in pending["bridge"].items():
+            set_value(cfg, key, new)
+        validate(cfg)
+    return cfg
+
+
+def _load_file(path: Path | None) -> Config:
     cfg = Config(source=path)
     if path is None:
         return cfg
@@ -109,7 +171,9 @@ def load(explicit: str | None = None) -> Config:
         raise ConfigError(f"{path}: unknown section(s) {sorted(unknown)}")
 
     gw = _take(data.get("gateway", {}), "gateway",
-               {"host": str, "http_port": int, "user": str, "password_file": str})
+               {"host": str, "http_port": int, "user": str, "password_file": str,
+                "serial": dict, "func": dict})
+    cfg.gateway_pages = {p: {k: str(v) for k, v in gw.pop(p).items()} for p in GATEWAY_PAGES if p in gw}
     br = _take(data.get("bridge", {}), "bridge",
                {"flush_seconds": float, "keepalive_idle": int, "keepalive_interval": int,
                 "keepalive_count": int, "status_file": str})

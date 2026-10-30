@@ -1,4 +1,6 @@
 config.toml
+config.toml.bak
+config.pending.json
 .venv/
 __pycache__/
 *.pyc

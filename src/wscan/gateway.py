@@ -23,6 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import Config, password_path
 
@@ -113,8 +114,8 @@ def parse_vars(html: str) -> dict:
     return out
 
 
-def resolve_password(cfg: Config) -> tuple[str, str]:
-    """$WSCAN_PASSWORD, else password_file ("password" or "user:password"), else ask."""
+def resolve_password(cfg: Config, prompt: bool = True) -> tuple[str, str]:
+    """$WSCAN_PASSWORD, else password_file ("password" or "user:password"), else ask (if prompt)."""
     if os.environ.get("WSCAN_PASSWORD"):
         return cfg.user, os.environ["WSCAN_PASSWORD"]
     path = password_path(cfg)
@@ -125,9 +126,19 @@ def resolve_password(cfg: Config) -> tuple[str, str]:
         line = text.splitlines()[0] if text else ""
         user, sep, pw = line.partition(":")
         return (user or cfg.user, pw) if sep else (cfg.user, line)
-    if sys.stdin.isatty():
+    if prompt and sys.stdin.isatty():
         return cfg.user, getpass.getpass(f"password for {cfg.user}@{cfg.host}: ")
-    raise GatewayError(f"no password: set WSCAN_PASSWORD or create {path} (chmod 600)")
+    raise GatewayError(f"no gateway password: run `wscan setup`, or set WSCAN_PASSWORD, or create {path}")
+
+
+def write_password(cfg: Config, password: str) -> Path:
+    path = password_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(f"{cfg.user}:{password}\n")
+    os.chmod(path, 0o600)
+    return path
 
 
 class Gateway:
@@ -138,8 +149,8 @@ class Gateway:
         self.timeout, self.reboot_wait = timeout, reboot_wait
 
     @classmethod
-    def from_config(cls, cfg: Config) -> Gateway:
-        user, pw = resolve_password(cfg)
+    def from_config(cls, cfg: Config, prompt: bool = True) -> Gateway:
+        user, pw = resolve_password(cfg, prompt)
         return cls(cfg.host, user, pw, http_port=cfg.http_port)
 
     # --- HTTP -------------------------------------------------------------------------
@@ -264,9 +275,9 @@ class Gateway:
 
 
 def wanted_from_config(cfg: Config) -> dict:
-    """What `wscan gw apply` enforces: [channel.gateway] fields, plus what the bridge relies on:
-    each enabled channel in TCP server mode on the port written in the config."""
-    wanted = {}
+    """What `wscan gw apply` enforces: [channel.gateway] and [gateway.serial|func] fields, plus
+    what the bridge relies on: each enabled channel in TCP server mode on the configured port."""
+    wanted = {page: dict(fields) for page, fields in cfg.gateway_pages.items()}
     for ch in cfg.enabled_channels:
         wanted[ch.name] = {"workmode": "1", "localport": str(ch.port), **ch.gateway}
     return wanted

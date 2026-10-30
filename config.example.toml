@@ -10,6 +10,13 @@ user = "admin"
 # or from this file ("password" or "user:password", chmod 600), or asks for it.
 password_file = "~/.config/wscan/auth"
 
+# Optional: settings of the gateway's other pages, written by `wscan gw apply`
+# (field names as printed by `wscan gw show serial` / `wscan gw show func`).
+# [gateway.serial]
+# baud = 115200
+# [gateway.func]
+# can2can = 0
+
 [bridge]
 flush_seconds = 0.3           # on connect, drop what the gateway buffered while nobody listened
 keepalive_idle = 4            # a silent gateway is declared lost after idle + interval * count s

@@ -13,9 +13,10 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
+from .changes import ChangeError, pending_lines, revert, save, set_live
 from .codec import Deframer, encode, format_frame, parse_cansend
-from .config import Config, ConfigError, load, password_path
-from .gateway import PAGES, WRITABLE, Gateway, GatewayError, describe, wanted_from_config
+from .config import Config, ConfigError, load, password_path, read_pending
+from .gateway import PAGES, Gateway, GatewayError, describe, wanted_from_config
 
 SERVICE = "wscan-bridge"
 
@@ -29,21 +30,9 @@ def _confirm(question: str, yes: bool) -> bool:
     return input(f"{question} [y/N] ").strip().lower() in ("y", "yes", "s", "si")
 
 
-def _assignments(items: list[str]) -> dict:
-    out = {}
-    for item in items:
-        k, sep, v = item.partition("=")
-        if not sep:
-            raise SystemExit(f"expected field=value, got '{item}'")
-        out[k] = v
-    return out
-
-
-def _channel(cfg: Config, name: str):
-    for ch in cfg.channels:
-        if ch.name == name:
-            return ch
-    raise SystemExit(f"no channel '{name}' in the config")
+def _unsaved_note(cfg: Config) -> str:
+    return f"unsaved   {cfg.unsaved} change(s) tried with `wscan set`: wscan pending / save / revert" \
+        if cfg.unsaved else ""
 
 
 # --- commands -------------------------------------------------------------------------
@@ -59,6 +48,10 @@ def cmd_config(cfg: Config, a) -> int:
         extra = f"  gateway settings {ch.gateway}" if ch.gateway else ""
         print(f"channel   {ch.name}: {cfg.host}:{ch.port} <-> {ch.interface}"
               f"{'' if ch.enabled else '  (disabled)'}{extra}")
+    for page, fields in cfg.gateway_pages.items():
+        print(f"gateway   {page} settings {fields}")
+    if cfg.unsaved:
+        print(_unsaved_note(cfg))
     return 0
 
 
@@ -107,6 +100,8 @@ def cmd_status(cfg: Config, a) -> int:
     except OSError as e:
         print(f"gateway   {cfg.host} NOT answering ({e}): try `wscan net check`")
         ok = False
+    if cfg.unsaved:
+        print(_unsaved_note(cfg))
     return 0 if ok else 1
 
 
@@ -179,22 +174,11 @@ def _gw(gw: Gateway, cfg: Config, a) -> int:
         path = Path(a.file or f"gateway-backup-{datetime.now():%Y%m%d-%H%M%S}.json")
         path.write_text(json.dumps(gw.backup(), indent=2, ensure_ascii=False))
         print(f"saved {path}")
-    elif a.gw_cmd == "set":
-        diff = gw.diff(a.page, _assignments(a.assign))
-        if not diff:
-            print("nothing to change")
-            return 0
-        for f, (old, new) in diff.items():
-            print(f"  {a.page}.{f}: {old} -> {new}")
-        if a.dry_run or not _confirm("write to the gateway?", a.yes):
-            return 0
-        gw.write(a.page, {f: new for f, (_, new) in diff.items()})
-        print("saved and verified")
-        if a.restart:
-            print(f"restarted, back after {gw.restart():.0f} s")
-        else:
-            print("takes effect at the next gateway restart (wscan gw restart, or --restart)")
     elif a.gw_cmd == "apply":
+        if read_pending(cfg.pending_file)["gateway"]:
+            print("there are gateway changes tried with `wscan set` and not saved: "
+                  "`wscan save` or `wscan revert` first (wscan pending lists them)")
+            return 1
         plan = gw.plan(wanted_from_config(cfg))
         if not plan:
             print(f"gateway already matches {cfg.source or 'the defaults'}")
@@ -212,8 +196,59 @@ def _gw(gw: Gateway, cfg: Config, a) -> int:
     return 0
 
 
+def _changes(fn, cfg: Config) -> int:
+    try:
+        fn(cfg)
+        return 0
+    except (ChangeError, GatewayError, ConfigError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_set(cfg: Config, a) -> int:
+    def go(c):
+        if set_live(c, a.assign, restart=not a.no_restart, say=print) and a.save:
+            save(load(str(c.source) if c.source else None))
+    return _changes(go, cfg)
+
+
+def cmd_show(cfg: Config, a) -> int:
+    from .show import show
+    return show(cfg)
+
+
+def cmd_setup(cfg: Config, a) -> int:
+    from .wizard import Prompter, SetupError, run
+    if not sys.stdin.isatty():
+        print("setup asks questions: run it in a terminal", file=sys.stderr)
+        return 2
+    try:
+        return run(cfg, Prompter())
+    except (SetupError, ConfigError, GatewayError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except (KeyboardInterrupt, EOFError):
+        print("\nsetup interrupted", file=sys.stderr)
+        return 130
+
+
+def cmd_pending(cfg: Config, a) -> int:
+    lines = pending_lines(cfg)
+    print("\n".join(["applied, not saved (wscan save / wscan revert):", *lines]) if lines
+          else "no unsaved changes")
+    return 0
+
+
+def cmd_save(cfg: Config, a) -> int:
+    return _changes(save, cfg)
+
+
+def cmd_revert(cfg: Config, a) -> int:
+    return _changes(lambda c: revert(c, restart=not a.no_restart), cfg)
+
+
 def _data_socket(cfg: Config, name: str) -> socket.socket:
-    ch = _channel(cfg, name)
+    ch = cfg.channel(name)
     return socket.create_connection((cfg.host, ch.port), timeout=3)
 
 
@@ -252,16 +287,60 @@ def cmd_send(cfg: Config, a) -> int:
 
 # --- parser ---------------------------------------------------------------------------
 
+SET_HELP = """Changes take effect at once (the gateway restarts in a few seconds) and are kept
+only after `wscan save`; `wscan revert` undoes them.
+
+on a channel, can1 or can2:
+  bitrate=500000          bus bit rate, 10000..1000000 (every device on the bus needs the same)
+  mode=normal|loopback
+  filter=off              every frame passes
+  filter=allow:100-1FF    only these standard IDs (hex); block:... drops them instead
+  filter=allow-ext:18FF0000-18FFFFFF   the same for 29-bit IDs (block-ext: too); allow:101 = one ID
+  packet_ms=10            the gateway sends what it collected every N ms
+  packet_frames=50        ... or as soon as it has N frames
+  name=can0               interface name on this device
+  on=false                stop using the channel (on=true to use it again)
+  port=20001              TCP port (changed on the gateway and in the bridge)
+also: gateway.host=192.168.0.7, and the raw fields of `wscan gw show` (can1.<field>, serial.<field>)
+
+examples:
+  wscan set can1.bitrate=500000 can1.filter=allow:100-1FF
+  wscan set can2.on=false --save"""
+
+EVERYDAY = """everyday commands:
+  wscan show                         everything at a glance
+  wscan set can1.bitrate=500000      change a setting (try it; several at once are fine)
+  wscan save | wscan revert          keep the change | undo it
+  wscan status                       is it working?
+  wscan setup                        the installation questions again
+
+settings for `set`, on can1 or can2: bitrate, mode, filter, packet_ms, packet_frames, name, on, port
+(wscan set -h for the details)"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="wscan", description="SocketCAN bridge and tools for the "
-                                 "Waveshare 2-CH-CAN-TO-ETH (USR-CANET200 family).")
+                                 "Waveshare 2-CH-CAN-TO-ETH (USR-CANET200 family).",
+                                 epilog=EVERYDAY, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", help="config file (default: $WSCAN_CONFIG, <repo>/config.toml, "
                     "~/.config/wscan/config.toml, /etc/wscan/config.toml)")
     ap.add_argument("--version", action="version", version=f"wscan {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
 
+    sub.add_parser("show", help="everything at a glance: channels, bit rates, filters, bridge")
+    st = sub.add_parser("set", help="change settings now, keep them with `save`: wscan set can1.bitrate=500000",
+                        formatter_class=argparse.RawDescriptionHelpFormatter, description=SET_HELP)
+    st.add_argument("assign", nargs="+", metavar="channel.setting=value")
+    st.add_argument("--save", action="store_true", help="save right away, no separate `wscan save`")
+    st.add_argument("--no-restart", action="store_true", help="write the gateway but do not restart it")
+    sub.add_parser("save", help="write the tried changes into the config file")
+    rv = sub.add_parser("revert", help="undo the tried changes")
+    rv.add_argument("--no-restart", action="store_true")
+    sub.add_parser("pending", help="changes tried with `set` and not saved yet")
+    sub.add_parser("status", help="is it working: bridge service, channels, gateway")
+    sub.add_parser("setup", help="guided configuration: answers with defaults, then applies everything")
+
     sub.add_parser("config", help="show the effective configuration and where it came from")
-    sub.add_parser("status", help="bridge service, channels and gateway at a glance")
     sub.add_parser("bridge", help="run the bridge in the foreground (what the service runs)")
     sub.add_parser("vcan-up", help="create the CAN interfaces named in the config (root)")
 
@@ -285,14 +364,8 @@ def build_parser() -> argparse.ArgumentParser:
     gs.add_argument("page", nargs="?", default="all", choices=list(PAGES) + ["all"])
     gb = gsub.add_parser("backup", help="save every setting to a JSON file")
     gb.add_argument("file", nargs="?")
-    gset = gsub.add_parser("set", help="change fields of one page: wscan gw set can1 baud=500000 --restart")
-    gset.add_argument("page", choices=WRITABLE)
-    gset.add_argument("assign", nargs="+", metavar="field=value")
-    gset.add_argument("--restart", action="store_true", help="restart the gateway so it takes effect")
-    gset.add_argument("--dry-run", action="store_true")
-    gset.add_argument("--yes", action="store_true")
     gap = gsub.add_parser("apply", help="make the gateway match the config ([[channel]] port, "
-                          "[channel.gateway] fields), then restart it")
+                          "[channel.gateway] and [gateway.serial|func] fields), then restart it")
     gap.add_argument("--dry-run", action="store_true")
     gap.add_argument("--yes", action="store_true")
     gap.add_argument("--no-restart", action="store_true")
@@ -309,7 +382,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {"config": cmd_config, "status": cmd_status, "bridge": cmd_bridge, "vcan-up": cmd_vcan_up,
-            "discover": cmd_discover, "net": cmd_net, "gw": cmd_gw, "dump": cmd_dump, "send": cmd_send}
+            "discover": cmd_discover, "net": cmd_net, "gw": cmd_gw, "dump": cmd_dump, "send": cmd_send,
+            "set": cmd_set, "pending": cmd_pending, "save": cmd_save, "revert": cmd_revert,
+            "show": cmd_show, "setup": cmd_setup}
 
 
 def main(argv: list[str] | None = None) -> int:

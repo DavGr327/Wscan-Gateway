@@ -146,6 +146,15 @@ def status_path(cfg: Config) -> Path | None:
     return None
 
 
+def read_status(cfg: Config) -> tuple[Path, dict | None]:
+    """The running bridge's status file: (path, document or None if missing/unreadable)."""
+    path = status_path(cfg) or DEFAULT_STATUS
+    try:
+        return path, json.loads(path.read_text())
+    except (OSError, ValueError):
+        return path, None
+
+
 def run(cfg: Config) -> int:
     channels = cfg.enabled_channels
     if not channels:
@@ -167,13 +176,16 @@ def run(cfg: Config) -> int:
              ", ".join(f"{c.name}:{c.port}->{c.interface}" for c in channels))
     spath = status_path(cfg)
     t_stats = time.monotonic()
-    while not stop.wait(STATUS_EVERY):
+    stop.wait(1)  # let the channels connect, then write the status file at once and every few seconds
+    while True:
         if spath:
             try:
                 _write_status(spath, cfg, links)
             except OSError as e:
                 log.warning("cannot write %s: %s", spath, e)
                 spath = None
+        if stop.wait(STATUS_EVERY):
+            break
         if time.monotonic() - t_stats >= STATS_EVERY:
             t_stats = time.monotonic()
             log.info(" | ".join(
