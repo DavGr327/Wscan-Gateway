@@ -1,0 +1,17 @@
+[Unit]
+Description=wscan: SocketCAN bridge for a Waveshare 2-CH-CAN-TO-ETH gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+Environment=WSCAN_CONFIG=@REPO@/config.toml
+# creates the interfaces named in the config; the + runs this step as root
+ExecStartPre=+@REPO@/wscan vcan-up
+ExecStart=@REPO@/wscan bridge
+RuntimeDirectory=wscan
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

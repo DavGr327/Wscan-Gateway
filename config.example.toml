@@ -1,0 +1,49 @@
+# wscan configuration. Copy to config.toml (install.sh does it) and edit.
+# Every key is optional: what is left out keeps the value shown here,
+# which matches a gateway fresh from the factory.
+
+[gateway]
+host = "192.168.0.7"          # gateway address (find it with: wscan discover)
+http_port = 80                # web configuration page
+user = "admin"
+# The password never goes in this file. wscan gw ... reads it from $WSCAN_PASSWORD,
+# or from this file ("password" or "user:password", chmod 600), or asks for it.
+password_file = "~/.config/wscan/auth"
+
+[bridge]
+flush_seconds = 0.3           # on connect, drop what the gateway buffered while nobody listened
+keepalive_idle = 4            # a silent gateway is declared lost after idle + interval * count s
+keepalive_interval = 2
+keepalive_count = 3
+# status_file = "/run/wscan/status.json"   # default when run by the service
+
+# Optional: this host's address on the gateway's network, set by `sudo wscan net apply`
+# through NetworkManager (no default gateway, rollback if something breaks).
+# Use a subnet that no other interface of this host is on.
+# [network]
+# interface = "eth0"
+# address = "192.168.0.10/24"
+
+# One block per gateway channel to bridge.
+#   name       gateway channel: can1 or can2
+#   port       that channel's TCP port on the gateway (factory: can1 20001, can2 20005)
+#   interface  SocketCAN interface created on this host. Any name up to 15 characters:
+#              vcan0/vcan1 by default; can0/can1 if a program (e.g. CODESYS) wants those names
+#   enabled    false to leave the channel out
+[[channel]]
+name = "can1"
+port = 20001
+interface = "vcan0"
+
+# Optional: gateway settings for this channel, written by `wscan gw apply`
+# (field names as printed by `wscan gw show can1`). apply also sets TCP server mode and
+# the port above, which the bridge needs.
+# [channel.gateway]
+# baud = 500000
+# packttime = 10
+
+[[channel]]
+name = "can2"
+port = 20005
+interface = "vcan1"
+enabled = true

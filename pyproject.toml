@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wscan"
+dynamic = ["version"]
+description = "SocketCAN bridge and CLI for the Waveshare 2-CH-CAN-TO-ETH (USR-CANET200 family)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = ["tomli>=1.1; python_version < '3.11'"]
+
+[project.optional-dependencies]
+bench = ["pyserial>=3.5"]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/DavGr327/Wscan-Gateway"
+
+[project.scripts]
+wscan = "wscan.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "wscan.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Runs wscan straight from the cloned repo: nothing to install (Python >= 3.11, stdlib only).
+REPO="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PY="$REPO/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m wscan "$@"

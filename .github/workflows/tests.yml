@@ -1,0 +1,26 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[test]"
+      - name: virtual CAN interface for the bridge test
+        run: |
+          sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" || true
+          if sudo modprobe vcan; then
+            sudo ip link add dev vcantest type vcan && sudo ip link set vcantest up
+            echo "WSCAN_TEST_VCAN=vcantest" >> "$GITHUB_ENV"
+          else
+            echo "vcan not available: the bridge test will be skipped"
+          fi
+      - run: pytest -v
